@@ -1,0 +1,170 @@
+# =============================================================================
+# LANCO / RUN29 — Pipeline COI metabarcoding (Leray-XT + DADA2 + BOLD/NCBI)
+# Workshop "Microbiome amplicon workshop design"
+# =============================================================================
+# Cualquier script del workflow lee este archivo (R: yaml::read_yaml).
+# Modifica SOLO aquí los parámetros; no los pongas hardcoded en los scripts.
+
+project:
+  name: LANCO_RUN29_COI
+  run_id: RUN29
+  sequencer: Illumina MiSeq M03978
+  read_config: 2x301 paired-end
+  date_created: 2026-06-17
+
+paths:
+  # Todas relativas a la raíz del repo (LANCO/)
+  raw_reads:    RUN29
+  # Mapping file FILTRADO a las 38 muestras L (COI Leray-XT).
+  # Backup del archivo original: metadata/samples_RUN29.tsv.bak_YYYYMMDD
+  metadata:     metadata/samples_RUN29_COI.tsv
+  results:      results
+  logs:         logs
+  cutadapt_out: results/02_cutadapt
+  filtered_out: results/03_dada2/filtered
+  dada2_out:    results/03_dada2
+  taxonomy_out: results/04_taxonomy
+  db_dir:       db
+  rescript_dir: db/rescript
+
+# --- Primers Leray-XT (Wangensteen et al. 2018) -------------------------------
+# Estos son los primers usados en RUN29 (confirmado por inspección de FASTQ).
+primers:
+  fwd_name: mlCOIintF
+  fwd_seq:  GGWACWGGWTGAACWGTWTAYCCYCC      # 26 nt, degenerada
+  rev_name: jgHCO2198
+  rev_seq:  TANACYTCNGGRTGNCCRAARAAYCA      # 26 nt, degenerada
+  amplicon_expected_bp: 313                  # tamaño esperado del amplicón
+
+# --- Cutadapt (paso 02) -------------------------------------------------------
+cutadapt:
+  min_length: 50           # descarta reads muy cortos post-trimming
+  error_rate: 0.15         # 15 % por la alta degeneración de COI
+  discard_untrimmed: true  # tira reads sin primer (señal de off-target)
+  cores: 4
+
+# --- DADA2: filterAndTrim (paso 03) -------------------------------------------
+# Estrategia: TRIMMING ESTRICTO Q20.
+#
+# Diagnóstico empírico sobre 8 muestras L (3000 reads c/u), mediana de calidad
+# por posición en reads CRUDOS (antes de cutadapt):
+#   R1: Q>20 sostenido hasta ~pos 175; colapso a Q9 desde ~pos 175
+#   R2: Q>20 sostenido hasta ~pos 150; colapso a Q15-8 desde ~pos 200
+#
+# Tras cutadapt (remueve 26 nt del primer fwd y rev), los reads quedan ~275 nt.
+# Las posiciones truncLen abajo son POST-CUTADAPT.
+#
+# Restricciones de cobertura (Leray amplicón = 313 nt):
+#   truncLen_R1 + truncLen_R2 >= 313 + 12 (minOverlap)  →  >= 325 nt
+#   Con 220 + 150 = 370 nt → ~57 nt de overlap, robusto a indels/errores.
+filter_and_trim:
+  truncLen_R1: 220         # POST-cutadapt: cubre región Q>=20 con margen
+  truncLen_R2: 150         # POST-cutadapt: trunca antes del colapso R2
+  maxN: 0
+  maxEE_R1: 1              # ESTRICTO (antes 2): max 1 error esperado en R1
+  maxEE_R2: 2              # ESTRICTO (antes 4): max 2 errores esperados en R2
+  truncQ: 20               # ESTRICTO Q20: trunca cada read en primera base Q<20
+  rm_phix: true
+  multithread: true
+
+# --- DADA2: learnErrors + dada (paso 03) --------------------------------------
+dada2_inference:
+  pool: pseudo             # pseudo-pooling: balance sensibilidad/tiempo
+  OMEGA_A: 1e-40           # default DADA2 — ajustar solo si justificas
+  multithread: true
+
+# --- DADA2: mergePairs --------------------------------------------------------
+merge_pairs:
+  minOverlap: 12
+  maxMismatch: 0
+
+# --- DADA2: removeBimeraDenovo -----------------------------------------------
+chimera:
+  method: consensus
+
+# --- COI-specific post-processing --------------------------------------------
+# COI codifica proteína: ASVs con stop codons internos son probablemente NUMTs.
+coi_filtering:
+  apply_translation_check: true
+  genetic_code: 5                # Invertebrate Mitochondrial (NCBI table 5)
+  frame: auto                    # detectar marco; alternativa: 1, 2, o 3
+  min_length: 299                # 313 ± 14 nt (longitud Leray esperada)
+  max_length: 320
+
+# --- Taxonomía: BOLD + NCBI vía RESCRIPt --------------------------------------
+# Estrategia (reemplaza MIDORI2): construir DOS DBs curadas con RESCRIPt
+# siguiendo los tutoriales oficiales del foro QIIME2:
+#   - BOLD:  https://forum.qiime2.org/t/building-a-coi-database-from-bold-references/16129
+#   - NCBI:  https://forum.qiime2.org/t/building-a-coi-database-from-ncbi-references/16500
+#
+# Estos pipelines se ejecutan UNA SOLA VEZ (paso 04a y 04b) y producen los
+# artefactos .qza que luego se exportan a FASTA/TSV consumibles por DADA2.
+#
+# El paso 04 (asignación) ofrece tres estrategias seleccionables:
+#   1) Naive Bayes en QIIME2 (classify-sklearn) — mejor para BOLD curada
+#   2) VSEARCH consensus (classify-consensus-vsearch) — robusto a gaps
+#   3) DADA2 assignTaxonomy() en R — más simple, no requiere QIIME2 en infer
+taxonomy:
+  strategy: vsearch_consensus      # naive_bayes | vsearch_consensus | dada2_R
+  primary_db:   bold               # BOLD primero (mejor cobertura de metazoos)
+  secondary_db: ncbi               # NCBI para huérfanos de BOLD
+
+  # --- BOLD vía RESCRIPt ---------------------------------------------------
+  bold:
+    enabled: true
+    rescript_marker: COI-5P
+    # Taxa a descargar (filtros BOLD). Para LANCO oceanográfico:
+    # Metazoa + Algae + Fungi cubre el espectro esperable en eDNA marino.
+    taxa:
+      - Metazoa
+      - Algae
+      - Fungi
+    # Filtros de curado (RESCRIPt cull-seqs / filter-seqs)
+    min_length: 250                # COI 313 ± wobble, descartar fragmentos
+    max_length: 1600               # full-length COI hasta ~1500 nt
+    max_ambig: 5                   # descartar seqs con >5 N
+    # Dereplicación
+    dereplicate_mode: uniq         # uniq | lca | majority
+    # Salidas
+    seqs_qza: db/rescript/bold-coi-seqs.qza
+    tax_qza:  db/rescript/bold-coi-tax.qza
+    classifier_qza: db/rescript/bold-coi-classifier.qza
+    seqs_fasta: db/rescript/bold-coi-seqs.fasta        # export para DADA2/VSEARCH
+    tax_tsv:    db/rescript/bold-coi-tax.tsv
+
+  # --- NCBI vía RESCRIPt ---------------------------------------------------
+  ncbi:
+    enabled: true
+    # Query Entrez para COI completo (mitocondrial), excluye predicted/incomplete
+    entrez_query: >-
+      (COI[Title] OR COX1[Title] OR CO1[Title] OR
+       "cytochrome c oxidase subunit 1"[Title] OR
+       "cytochrome oxidase subunit 1"[Title])
+      AND 250:1600[SLEN]
+      NOT (environmental samples[ORGN] OR unclassified[ORGN])
+    ranks: ["superkingdom","phylum","class","order","family","genus","species"]
+    min_length: 250
+    max_length: 1600
+    max_ambig: 5
+    dereplicate_mode: uniq
+    seqs_qza: db/rescript/ncbi-coi-seqs.qza
+    tax_qza:  db/rescript/ncbi-coi-tax.qza
+    classifier_qza: db/rescript/ncbi-coi-classifier.qza
+    seqs_fasta: db/rescript/ncbi-coi-seqs.fasta
+    tax_tsv:    db/rescript/ncbi-coi-tax.tsv
+
+  # --- Clasificación ASVs --------------------------------------------------
+  classification:
+    # parámetros para classify-consensus-vsearch
+    perc_identity: 0.85
+    maxaccepts: 10
+    min_consensus: 0.51
+    threads: 8
+    # parámetros para DADA2 assignTaxonomy (fallback en R)
+    dada2_minBoot: 80
+    dada2_tryRC: true
+
+# --- Recursos de cómputo ------------------------------------------------------
+compute:
+  cores_total: 8
+  memory_gb: 32
