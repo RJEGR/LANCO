@@ -139,12 +139,16 @@ dadaRs <- dada(filtRs, err = errR,
 saveRDS(dadaRs, file.path(out_dir, "dada_R2.rds"))
 
 # ---- 5) mergePairs ---------------------------------------------------------
-message("[03] mergePairs...")
+# Con truncLen Q20-reality (140+160=300 nt) < Leray amplicón (313 nt), NO hay
+# overlap suficiente. justConcatenate=TRUE concatena R1+10×N+revComp(R2) → 310 nt.
+just_concat <- isTRUE(params$merge_pairs$justConcatenate)
+message("[03] mergePairs (justConcatenate=", just_concat, ")...")
 mergers <- mergePairs(
   dadaFs, filtFs, dadaRs, filtRs,
-  minOverlap  = params$merge_pairs$minOverlap,
-  maxMismatch = params$merge_pairs$maxMismatch,
-  verbose     = TRUE
+  minOverlap      = params$merge_pairs$minOverlap,
+  maxMismatch     = params$merge_pairs$maxMismatch,
+  justConcatenate = just_concat,
+  verbose         = TRUE
 )
 saveRDS(mergers, file.path(out_dir, "mergers.rds"))
 
@@ -169,7 +173,12 @@ message(sprintf("[03] Filtro longitud (%d-%d nt): %d/%d ASVs conservados",
 seqtab_nc <- seqtab_nc[, keep_l, drop = FALSE]
 
 # ---- 8) NUMT screen por traducción -----------------------------------------
-if (isTRUE(params$coi_filtering$apply_translation_check)) {
+# Con justConcatenate=TRUE el ASV es R1 + 10×N + revComp(R2), discontinuo en
+# coordenadas biológicas. La traducción a través del linker NNNNNNNNNN rompe
+# el marco de lectura artificialmente, generando stop codons falsos. Por eso
+# el check se DESACTIVA cuando hay concatenación. Si se quisiera, habría que
+# traducir cada mitad por separado y luego unirlas — fuera de scope del workshop.
+if (isTRUE(params$coi_filtering$apply_translation_check) && !just_concat) {
   message("[03] Check de traducción (código genético ",
           params$coi_filtering$genetic_code, ")...")
   gc <- getGeneticCode(as.character(params$coi_filtering$genetic_code))
@@ -186,6 +195,8 @@ if (isTRUE(params$coi_filtering$apply_translation_check)) {
   message("[03] ASVs con ORF abierto (no NUMT-like): ",
           sum(has_orf), "/", length(has_orf))
   seqtab_nc <- seqtab_nc[, has_orf, drop = FALSE]
+} else if (just_concat) {
+  message("[03] NUMT screen DESACTIVADO (incompatible con justConcatenate=TRUE).")
 }
 
 saveRDS(seqtab_nc, file.path(out_dir, "seqtab_nochim.rds"))
