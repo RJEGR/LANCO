@@ -14,12 +14,11 @@
 #   4) Entrenar (opcional) un Naive Bayes classifier
 #   5) Exportar a FASTA + TSV consumible por R/DADA2 y VSEARCH
 # -----------------------------------------------------------------------------
-# Requisitos (conda):
-#   mamba create -n qiime2-rescript -c qiime2 -c conda-forge -c bioconda \
-#         -c defaults qiime2 q2-rescript yq=4.* python=3.10
+# Requisitos:
+#   bash workflow/00_setup_envs.sh rescript   # crea qiime2-rescript + RESCRIPt + yq v4
 #   mamba activate qiime2-rescript
-#   # RESCRIPt instalado desde el plugin oficial:
-#   pip install git+https://github.com/bokulich-lab/RESCRIPt.git
+# (yq v4 -mikefarah/yq- no existe en conda; 00_setup_envs.sh lo instala como
+#  binario directo desde GitHub releases en el bin del entorno activo.)
 # -----------------------------------------------------------------------------
 # Tiempo esperado: 2–8 h dependiendo del taxon (Metazoa es el más pesado).
 # Espacio en disco: ~10–25 GB para BOLD Metazoa completo.
