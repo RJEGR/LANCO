@@ -44,26 +44,29 @@ cutadapt:
   cores: 4
 
 # --- DADA2: filterAndTrim (paso 03) -------------------------------------------
-# Estrategia: TRIMMING ESTRICTO Q20.
+# Estrategia: TRIMMING Q20-REALITY (data-driven).
 #
-# Diagnóstico empírico sobre 8 muestras L (3000 reads c/u), mediana de calidad
-# por posición en reads CRUDOS (antes de cutadapt):
-#   R1: Q>20 sostenido hasta ~pos 175; colapso a Q9 desde ~pos 175
-#   R2: Q>20 sostenido hasta ~pos 150; colapso a Q15-8 desde ~pos 200
+# Diagnóstico empírico sobre 38 muestras L (results/01_quality/quality_profile_*.tsv):
+#   Mediana de calidad CRUDA (antes de cutadapt, n=38):
+#     R1: Q>=20 sostenido hasta pos ~130 (raw)
+#     R2: Q>=20 sostenido hasta pos ~145 (raw)
 #
-# Tras cutadapt (remueve 26 nt del primer fwd y rev), los reads quedan ~275 nt.
-# Las posiciones truncLen abajo son POST-CUTADAPT.
+# Tras cutadapt (remueve 26 nt del primer fwd y rev), las posiciones truncLen
+# son POST-CUTADAPT:
+#   truncLen_R1 = 140   (pos raw ~166: ligeramente más allá del cutoff Q20)
+#   truncLen_R2 = 160   (pos raw ~186)
 #
-# Restricciones de cobertura (Leray amplicón = 313 nt):
-#   truncLen_R1 + truncLen_R2 >= 313 + 12 (minOverlap)  →  >= 325 nt
-#   Con 220 + 150 = 370 nt → ~57 nt de overlap, robusto a indels/errores.
+# CONFLICTO CON MERGE: 140 + 160 = 300 nt  <  313 + 12 = 325 nt mínimo overlap
+#   → Decisión (Ricardo, 2026-06-22): usar mergePairs(justConcatenate = TRUE)
+#     R1 y R2 se concatenan con un linker de 10 N en lugar de solapar.
+#     El ASV resultante tiene longitud 140 + 10 + 160 = 310 nt (ver coi_filtering).
 filter_and_trim:
-  truncLen_R1: 220         # POST-cutadapt: cubre región Q>=20 con margen
-  truncLen_R2: 150         # POST-cutadapt: trunca antes del colapso R2
+  truncLen_R1: 140         # POST-cutadapt, anclado a Q20 reality
+  truncLen_R2: 160         # POST-cutadapt
   maxN: 0
-  maxEE_R1: 1              # ESTRICTO (antes 2): max 1 error esperado en R1
-  maxEE_R2: 2              # ESTRICTO (antes 4): max 2 errores esperados en R2
-  truncQ: 20               # ESTRICTO Q20: trunca cada read en primera base Q<20
+  maxEE_R1: 1              # ESTRICTO: max 1 error esperado en R1
+  maxEE_R2: 2              # ESTRICTO: max 2 errores esperados en R2
+  truncQ: 20               # Q20: trunca cada read en primera base Q<20
   rm_phix: true
   multithread: true
 
@@ -74,8 +77,14 @@ dada2_inference:
   multithread: true
 
 # --- DADA2: mergePairs --------------------------------------------------------
+# justConcatenate=TRUE: el truncado Q20-reality (140+160=300 nt) no permite
+# overlap con el amplicón Leray (313 nt). En lugar de solapar, DADA2 concatena
+# R1 + 10×N + reverseComp(R2). El ASV resultante NO es biológicamente continuo
+# entre las dos mitades, pero es válido para asignación taxonómica con VSEARCH
+# (los N se tratan como gap tolerado) o BLAST.
 merge_pairs:
-  minOverlap: 12
+  justConcatenate: true
+  minOverlap: 12           # ignorado cuando justConcatenate=TRUE
   maxMismatch: 0
 
 # --- DADA2: removeBimeraDenovo -----------------------------------------------
@@ -83,13 +92,15 @@ chimera:
   method: consensus
 
 # --- COI-specific post-processing --------------------------------------------
-# COI codifica proteína: ASVs con stop codons internos son probablemente NUMTs.
+# IMPORTANTE: con justConcatenate=TRUE el ASV es 140 + 10N + 160 = 310 nt,
+# NO el amplicón continuo Leray (313 nt). El check de traducción no se puede
+# correr porque los 10 N rompen el marco de lectura entre las mitades.
 coi_filtering:
-  apply_translation_check: true
-  genetic_code: 5                # Invertebrate Mitochondrial (NCBI table 5)
-  frame: auto                    # detectar marco; alternativa: 1, 2, o 3
-  min_length: 299                # 313 ± 14 nt (longitud Leray esperada)
-  max_length: 320
+  apply_translation_check: false   # DESACTIVADO con justConcatenate=TRUE
+  genetic_code: 5                  # NCBI table 5 (queda informativo)
+  frame: auto
+  min_length: 305                  # 310 ± 5 (140+10N+160 con tolerancia)
+  max_length: 315
 
 # --- Taxonomía: BOLD + NCBI vía RESCRIPt --------------------------------------
 # Estrategia (reemplaza MIDORI2): construir DOS DBs curadas con RESCRIPt
