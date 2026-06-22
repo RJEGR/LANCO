@@ -39,6 +39,7 @@ El mapping file `metadata/samples_RUN29_COI.tsv` ya está filtrado a las 38 mues
 
 | Paso | Script | Entrada | Salida clave | Acciones recomendadas |
 |------|--------|---------|--------------|----------------------|
+| 0 | `00_setup_envs.sh` | (red) | envs `lanco_coi` + `qiime2-rescript`, R packages | `bash workflow/00_setup_envs.sh` una sola vez. `bash workflow/00_setup_envs.sh verify` para re-chequear |
 | 1 | `01_inspect_reads.R` | `RUN29/L*.fastq.gz` | `quality_profile_R{1,2}.pdf`, `primer_hits.tsv` | Confirmar Q drop y presencia de primer (>90 %) en muestras L |
 | 2 | `02_cutadapt_primers.sh` | `RUN29/L*.fastq.gz` | `results/02_cutadapt/L*.fastq.gz`, `cutadapt_summary.tsv` | Verificar `pct_passed > 80 %` |
 | 3 | `03_dada2_pipeline.R` (Q20 strict) | `results/02_cutadapt/` | `asvs.fasta`, `asv_table.tsv`, `track_reads.tsv`, `quality_postfilter_R*.pdf` | Si `pct_q20 < 40 %` en >5 muestras: relajar `truncQ` a 15 |
@@ -76,10 +77,9 @@ Bases de datos: construidas con `04a_build_BOLD_db_RESCRIPt.sh` y `04b_build_NCB
 
 ## Decisiones del workshop
 
-1. **Trimming Q20 estricto** (`truncQ=20`, `maxEE=(1,2)`): cada read se trunca en la primera base con Q<20. Los `truncLen` (R1=220, R2=150 post-cutadapt) se eligieron empíricamente del colapso de calidad observado en muestras L.
+1. **Trimming Q20-reality + justConcatenate.** Diagnóstico empírico sobre 38 muestras L (`results/01_quality/quality_profile_*.tsv`) confirmó drop sostenido <Q20 desde pos ~130 R1 y ~145 R2 (raw). Decisión Ricardo (2026-06-22): `truncQ=20`, `truncLen=(140, 160)` post-cutadapt, `maxEE=(1, 2)`. Como 140+160=300 < 325 mínimo para merge, se usa `mergePairs(justConcatenate=TRUE)`: R1 y R2 se concatenan con linker de 10×N. ASV final = 310 nt (140 + 10 N + 160). **Implicación**: el ASV NO es biológicamente continuo; el NUMT screen por traducción se desactiva (rompe marco a través del linker). VSEARCH/BLAST toleran los N como gap.
 2. **Pseudo-pooling en DADA2** para balance sensibilidad/costo en eDNA marino heterogéneo.
-3. **Filtro NUMT por traducción** (código 5, Invertebrate Mitochondrial) contra pseudogenes.
-4. **Filtro de longitud 299–320 nt** centrado en Leray (313 nt).
+3. **Filtro de longitud 305–315 nt** centrado en el ASV concatenado (310 nt).
 5. **DBs vía RESCRIPt** (BOLD + NCBI) en lugar de MIDORI2: control total del scope taxonómico (Metazoa/Algae/Fungi para LANCO) y query Entrez explícito para NCBI. Reproducible y citable.
 6. **VSEARCH consensus** como clasificador por defecto: robusto a gaps de COI, no requiere reentrenamiento. Naive Bayes (sklearn) y `assignTaxonomy()` disponibles como alternativas.
 7. **BOLD primero, NCBI para rescate**: BOLD tiene mejor cobertura de metazoos costeros; NCBI rescata clados raros (microeucariotas, parásitos).
@@ -88,12 +88,14 @@ Bases de datos: construidas con `04a_build_BOLD_db_RESCRIPt.sh` y `04b_build_NCB
 
 - [x] Estructura del proyecto creada
 - [x] Mapping file filtrado a COI (`samples_RUN29_COI.tsv`, n=38)
-- [x] `params.yml` con valores Leray-XT y Q20 strict
-- [x] Scripts 01, 02, 03 (Q20), 04a, 04b, 04 listos
+- [x] `params.yml` con valores Leray-XT + Q20-reality + justConcatenate
+- [x] Scripts 00, 01, 02, 03, 04a, 04b, 04 listos
+- [x] Inspección Q de los 38 FASTQ ejecutada en sandbox (Python equivalente)
+- [ ] **Vigilar L33 (37× mediana, 2.37M reads)**: revisar tracking post-DADA2; subsamplear si dist orsiona learnErrors
 - [ ] Rellenar columnas `site`, `depth_m`, `date_sampled`, `lat`, `lon` en mapping file
 - [ ] Configurar entornos conda (lanco_coi + qiime2-rescript)
 - [ ] Ejecutar 04a + 04b una vez para generar DBs
-- [ ] Primera corrida 01→03→04 y ajustar `truncLen` con datos reales
+- [ ] Primera corrida 01→03→04 sobre las 38 muestras
 
 ## Backups
 
