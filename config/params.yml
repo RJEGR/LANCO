@@ -61,12 +61,15 @@ cutadapt:
 #     R1 y R2 se concatenan con un linker de 10 N en lugar de solapar.
 #     El ASV resultante tiene longitud 140 + 10 + 160 = 310 nt (ver coi_filtering).
 filter_and_trim:
-  truncLen_R1: 140         # POST-cutadapt, anclado a Q20 reality
+  # CAMBIO 2026-06-22 (Ricardo): truncQ=20 + truncLen=(140,160) descartaba
+  # el 100 % de reads (filter_trim_stats.tsv). truncQ y maxEE son redundantes;
+  # se deja truncQ en el default DADA2 (2) y maxEE gobierna la calidad.
+  truncLen_R1: 140         # POST-cutadapt, anclado a Q20 reality (mediana)
   truncLen_R2: 160         # POST-cutadapt
   maxN: 0
-  maxEE_R1: 1              # ESTRICTO: max 1 error esperado en R1
-  maxEE_R2: 2              # ESTRICTO: max 2 errores esperados en R2
-  truncQ: 20               # Q20: trunca cada read en primera base Q<20
+  maxEE_R1: 2              # estándar COI; relajado desde 1
+  maxEE_R2: 2              # estándar COI; relajado desde 2 (mantenido)
+  truncQ: 2                # default DADA2; deja que maxEE haga el QC
   rm_phix: true
   multithread: true
 
