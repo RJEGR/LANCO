@@ -40,6 +40,13 @@ suppressPackageStartupMessages({
 ROOT   <- find_root(has_dir("RUN29"))
 params <- yaml::read_yaml(file.path(ROOT, "config", "params.yml"))
 
+# Coerción defensiva: yaml::read_yaml lee notación científica (1e-40) como
+# character en algunas versiones, lo que rompe dada(OMEGA_A=). Forzamos numeric.
+params$dada2_inference$OMEGA_A <- as.numeric(params$dada2_inference$OMEGA_A)
+stopifnot(is.finite(params$dada2_inference$OMEGA_A),
+          params$dada2_inference$OMEGA_A > 0,
+          params$dada2_inference$OMEGA_A < 1)
+
 samples <- read_tsv(file.path(ROOT, params$paths$metadata), show_col_types = FALSE)
 stopifnot(all(samples$target_detected == "COI_LerayXT"))
 message("[03] Procesando ", nrow(samples), " muestras COI Leray-XT (grupo L)")
