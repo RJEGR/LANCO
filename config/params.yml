@@ -2,8 +2,14 @@
 # LANCO / RUN29 — Pipeline COI metabarcoding (Leray-XT + DADA2 + BOLD/NCBI)
 # Workshop "Microbiome amplicon workshop design"
 # =============================================================================
+# *** ESTRATEGIA ACTIVA 2026-06-23: SINGLE-END R1 (Solución 2 deep-research) ***
+# El R2 de MiSeq 2×301 colapsa después del ciclo ~180; intento PE con
+# justConcatenate retuvo solo ~30 % de reads (ver params_PE.yml + log PE).
+# Esta versión usa SOLO R1 con truncLen=220 para amplicon Leray-XT 5' (213 nt
+# biológicamente continuo) → permite NUMT-screen por traducción.
+#
 # Cualquier script del workflow lee este archivo (R: yaml::read_yaml).
-# Modifica SOLO aquí los parámetros; no los pongas hardcoded en los scripts.
+# Snapshot anterior PE preservado en: config/params_PE.yml
 
 project:
   name: LANCO_RUN29_COI
@@ -20,12 +26,14 @@ paths:
   metadata:     metadata/samples_RUN29_COI.tsv
   results:      results
   logs:         logs
-  cutadapt_out: results/02_cutadapt
-  filtered_out: results/03_dada2/filtered
-  dada2_out:    results/03_dada2
-  taxonomy_out: results/04_taxonomy
-  db_dir:       db
-  rescript_dir: db/rescript
+  cutadapt_out:   results/02_cutadapt
+  filtered_out:   results/03_dada2/filtered
+  dada2_out:      results/03_dada2
+  dada2_se_out:   results/03_dada2_SE       # input para 05_swarm_LULU
+  swarm_lulu_out: results/05_swarm_lulu     # OTUs curados (post-Brandt 2021)
+  taxonomy_out:   results/04_taxonomy
+  db_dir:         db
+  rescript_dir:   db/rescript
 
 # --- Primers Leray-XT (Wangensteen et al. 2018) -------------------------------
 # Estos son los primers usados en RUN29 (confirmado por inspección de FASTQ).
@@ -44,32 +52,33 @@ cutadapt:
   cores: 4
 
 # --- DADA2: filterAndTrim (paso 03) -------------------------------------------
-# Estrategia: TRIMMING Q20-REALITY (data-driven).
+# ESTRATEGIA SINGLE-END (Solución 2): solo R1.
 #
-# Diagnóstico empírico sobre 38 muestras L (results/01_quality/quality_profile_*.tsv):
-#   Mediana de calidad CRUDA (antes de cutadapt, n=38):
-#     R1: Q>=20 sostenido hasta pos ~130 (raw)
-#     R2: Q>=20 sostenido hasta pos ~145 (raw)
+# Justificación:
+#   - R2 MiSeq 2×301 colapsa Q<20 después del ciclo ~180 (kit v3 endémico).
+#   - Intento PE con justConcatenate retuvo solo ~30 % (params_PE.yml).
+#   - R1 mantiene Q>=20 sostenido hasta posición ~220 post-cutadapt (calidad alta).
+#   - Endorse oficial DADA2 (Callahan, GitHub #176): "single read approach is
+#     better than using bad quality overlaps".
 #
-# Tras cutadapt (remueve 26 nt del primer fwd y rev), las posiciones truncLen
-# son POST-CUTADAPT:
-#   truncLen_R1 = 140   (pos raw ~166: ligeramente más allá del cutoff Q20)
-#   truncLen_R2 = 160   (pos raw ~186)
-#
-# CONFLICTO CON MERGE: 140 + 160 = 300 nt  <  313 + 12 = 325 nt mínimo overlap
-#   → Decisión (Ricardo, 2026-06-22): usar mergePairs(justConcatenate = TRUE)
-#     R1 y R2 se concatenan con un linker de 10 N en lugar de solapar.
-#     El ASV resultante tiene longitud 140 + 10 + 160 = 310 nt (ver coi_filtering).
+# Trade-off aceptado:
+#   - Amplicón Leray completo = 313 nt; con R1 only obtenemos los 213 nt 5' del
+#     fragmento (truncLen 220 - primer 26 nt ya removido por cutadapt + algo de
+#     wobble). Suficiente para género/familia con BOLD/NCBI; pierde resolución
+#     filogenética intra-especie en el 3' del amplicón.
+#   - Ventaja: ASV biológicamente continuo → NUMT-screen por traducción REACTIVO.
 filter_and_trim:
-  # CAMBIO 2026-06-22 (Ricardo): truncQ=20 + truncLen=(140,160) descartaba
-  # el 100 % de reads (filter_trim_stats.tsv). truncQ y maxEE son redundantes;
-  # se deja truncQ en el default DADA2 (2) y maxEE gobierna la calidad.
-  truncLen_R1: 140         # POST-cutadapt, anclado a Q20 reality (mediana)
-  truncLen_R2: 160         # POST-cutadapt
+  # CAMBIO 2026-06-23 v2: truncLen=220 + maxEE=2 dio 0.7 % retención.
+  # Evidencia: el R1 también colapsa después de pos ~140 (no solo R2).
+  # Ajuste data-driven: truncLen=180 (anclado a Q sostenido real del R1) +
+  # maxEE=3 (tolera la acumulación de errores en los 180 nt). Esperamos
+  # retención >70 % manteniendo amplicón ≥170 nt (sirve para BOLD asignación).
+  truncLen_R1: 180         # POST-cutadapt; ajustado a colapso real del R1
+  truncLen_R2: 0           # IGNORADO en pipeline SE
   maxN: 0
-  maxEE_R1: 2              # estándar COI; relajado desde 1
-  maxEE_R2: 2              # estándar COI; relajado desde 2 (mantenido)
-  truncQ: 2                # default DADA2; deja que maxEE haga el QC
+  maxEE_R1: 3              # relajado de 2 → 3 para compensar truncLen mayor
+  maxEE_R2: 5              # IGNORADO en pipeline SE
+  truncQ: 2                # default DADA2; maxEE gobierna QC
   rm_phix: true
   multithread: true
 
@@ -80,30 +89,27 @@ dada2_inference:
   multithread: true
 
 # --- DADA2: mergePairs --------------------------------------------------------
-# justConcatenate=TRUE: el truncado Q20-reality (140+160=300 nt) no permite
-# overlap con el amplicón Leray (313 nt). En lugar de solapar, DADA2 concatena
-# R1 + 10×N + reverseComp(R2). El ASV resultante NO es biológicamente continuo
-# entre las dos mitades, pero es válido para asignación taxonómica con VSEARCH
-# (los N se tratan como gap tolerado) o BLAST.
+# *** IGNORADO en pipeline SINGLE-END *** (no hay R2 que mergear).
+# Bloque conservado para que el script PE de respaldo siga parseando el YAML.
 merge_pairs:
-  justConcatenate: true
-  minOverlap: 12           # ignorado cuando justConcatenate=TRUE
-  maxMismatch: 0
+  justConcatenate: true    # IGNORADO en SE
+  minOverlap: 12           # IGNORADO en SE
+  maxMismatch: 0           # IGNORADO en SE
 
 # --- DADA2: removeBimeraDenovo -----------------------------------------------
 chimera:
   method: consensus
 
 # --- COI-specific post-processing --------------------------------------------
-# IMPORTANTE: con justConcatenate=TRUE el ASV es 140 + 10N + 160 = 310 nt,
-# NO el amplicón continuo Leray (313 nt). El check de traducción no se puede
-# correr porque los 10 N rompen el marco de lectura entre las mitades.
+# Single-end: el ASV ES biológicamente continuo (R1 only, sin linker N).
+# → Reactivamos el NUMT-screen por traducción (código genético 5 invertebrado).
+# Longitud esperada ASV ≈ truncLen_R1 = 220 nt ± wobble por chimera removal.
 coi_filtering:
-  apply_translation_check: false   # DESACTIVADO con justConcatenate=TRUE
-  genetic_code: 5                  # NCBI table 5 (queda informativo)
+  apply_translation_check: true    # REACTIVADO en single-end (ORF continuo)
+  genetic_code: 5                  # NCBI table 5 (invertebrate mitochondrial)
   frame: auto
-  min_length: 305                  # 310 ± 5 (140+10N+160 con tolerancia)
-  max_length: 315
+  min_length: 170                  # truncLen_R1 180 ± 10
+  max_length: 185
 
 # --- Taxonomía: BOLD + NCBI vía RESCRIPt --------------------------------------
 # Estrategia (reemplaza MIDORI2): construir DOS DBs curadas con RESCRIPt
@@ -177,6 +183,44 @@ taxonomy:
     # parámetros para DADA2 assignTaxonomy (fallback en R)
     dada2_minBoot: 80
     dada2_tryRC: true
+
+# --- Paso 05: swarm clustering + LULU curation (Brandt et al. 2021) ----------
+# Justificación: DADA2 trata cada nucleótido del codón como equivalente y puede
+# sobre-llamar variantes en marcadores codificantes (COI). Antich 2021 y Brandt
+# 2021 demuestran que la curación post-DADA2 con swarm (clustering basado en
+# diferencias locales) + LULU (eliminación de ASVs espurios por co-ocurrencia
+# + similitud) produce inventarios biodiversidad más cercanos a referencia
+# morfológica. Ejemplo benchmark: Brandt 2021 (Mol Ecol Resour) sobre 42
+# muestras sedimento abisal con marcador COI Leray.
+#
+# Pipeline:
+#   asvs.fasta → swarm (clustering local d=13)  → OTU seeds + member-mapping
+#   asv_table  → colapso por cluster            → otu_table_swarm.tsv
+#   seeds + otu_table → vsearch usearch_global  → match_list (84% identity)
+#   otu_table + match_list → LULU::lulu()       → curated_otu_table.tsv
+#
+# DEPENDENCIAS EXTERNAS:
+#   - swarm   v3+   (Mahé et al. 2014; https://github.com/torognes/swarm)
+#   - vsearch v2+   (https://github.com/torognes/vsearch)
+#   - R-pkg  lulu   (devtools::install_github("tobiasgf/lulu"))
+swarm_lulu:
+  swarm:
+    enabled: true
+    d: 13                     # max differences allowed within cluster
+                              # Brandt 2021 marine metazoo: 13
+                              # alt fastidious: d=1 (Mahé default; más conservador)
+    fastidious: false         # requiere d=1; ignorado si d>1
+    threads: 4
+  vsearch:
+    threads: 4
+    iddef: 1                  # identidad = matches/(matches+mismatches+indels)
+    min_match_pct: 84         # umbral inferior para incluir pairs en match_list
+  lulu:
+    enabled: true
+    minimum_match: 84         # % identidad para considerar daughter del parent
+    minimum_relative_cooccurence: 0.95  # daughter co-ocurre ≥95% donde parent
+    minimum_ratio_type: "min" # "min" (estricto) | "avg" (más permisivo)
+    minimum_ratio: 1          # parent_abund ≥ daughter_abund × ratio
 
 # --- Recursos de cómputo ------------------------------------------------------
 compute:
