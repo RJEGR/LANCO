@@ -1,0 +1,187 @@
+# =============================================================================
+# LANCO / RUN29 — Pipeline COI metabarcoding (Leray-XT + DADA2 + BOLD/NCBI)
+# Workshop "Microbiome amplicon workshop design"
+# =============================================================================
+# *** ARCHIVO ARCHIVADO 2026-06-23 — versión PAIRED-END (justConcatenate=TRUE)
+# *** Esta config produjo pct_retained mediana ~30 % (insuficiente para COI).
+# *** Snapshot reproducible; NO leído por el pipeline activo.
+# *** Pipeline activo (single-end): config/params.yml + 03_dada2_pipeline_SE.R
+# =============================================================================
+
+project:
+  name: LANCO_RUN29_COI
+  run_id: RUN29
+  sequencer: Illumina MiSeq M03978
+  read_config: 2x301 paired-end
+  date_created: 2026-06-17
+
+paths:
+  # Todas relativas a la raíz del repo (LANCO/)
+  raw_reads:    RUN29
+  # Mapping file FILTRADO a las 38 muestras L (COI Leray-XT).
+  # Backup del archivo original: metadata/samples_RUN29.tsv.bak_YYYYMMDD
+  metadata:     metadata/samples_RUN29_COI.tsv
+  results:      results
+  logs:         logs
+  cutadapt_out: results/02_cutadapt
+  filtered_out: results/03_dada2/filtered
+  dada2_out:    results/03_dada2
+  taxonomy_out: results/04_taxonomy
+  db_dir:       db
+  rescript_dir: db/rescript
+
+# --- Primers Leray-XT (Wangensteen et al. 2018) -------------------------------
+# Estos son los primers usados en RUN29 (confirmado por inspección de FASTQ).
+primers:
+  fwd_name: mlCOIintF
+  fwd_seq:  GGWACWGGWTGAACWGTWTAYCCYCC      # 26 nt, degenerada
+  rev_name: jgHCO2198
+  rev_seq:  TANACYTCNGGRTGNCCRAARAAYCA      # 26 nt, degenerada
+  amplicon_expected_bp: 313                  # tamaño esperado del amplicón
+
+# --- Cutadapt (paso 02) -------------------------------------------------------
+cutadapt:
+  min_length: 50           # descarta reads muy cortos post-trimming
+  error_rate: 0.15         # 15 % por la alta degeneración de COI
+  discard_untrimmed: true  # tira reads sin primer (señal de off-target)
+  cores: 4
+
+# --- DADA2: filterAndTrim (paso 03) -------------------------------------------
+# Estrategia: TRIMMING Q20-REALITY (data-driven).
+#
+# Diagnóstico empírico sobre 38 muestras L (results/01_quality/quality_profile_*.tsv):
+#   Mediana de calidad CRUDA (antes de cutadapt, n=38):
+#     R1: Q>=20 sostenido hasta pos ~130 (raw)
+#     R2: Q>=20 sostenido hasta pos ~145 (raw)
+#
+# Tras cutadapt (remueve 26 nt del primer fwd y rev), las posiciones truncLen
+# son POST-CUTADAPT:
+#   truncLen_R1 = 140   (pos raw ~166: ligeramente más allá del cutoff Q20)
+#   truncLen_R2 = 160   (pos raw ~186)
+#
+# CONFLICTO CON MERGE: 140 + 160 = 300 nt  <  313 + 12 = 325 nt mínimo overlap
+#   → Decisión (Ricardo, 2026-06-22): usar mergePairs(justConcatenate = TRUE)
+#     R1 y R2 se concatenan con un linker de 10 N en lugar de solapar.
+#     El ASV resultante tiene longitud 140 + 10 + 160 = 310 nt (ver coi_filtering).
+filter_and_trim:
+  # CAMBIO 2026-06-22 (Ricardo): truncQ=20 + truncLen=(140,160) descartaba
+  # el 100 % de reads (filter_trim_stats.tsv). truncQ y maxEE son redundantes;
+  # se deja truncQ en el default DADA2 (2) y maxEE gobierna la calidad.
+  truncLen_R1: 140         # POST-cutadapt, anclado a Q20 reality (mediana)
+  truncLen_R2: 160         # POST-cutadapt
+  maxN: 0
+  maxEE_R1: 2              # estándar COI; relajado desde 1
+  maxEE_R2: 5              # endorse Callahan c(2,5) para R2 colapsado MiSeq 2x300
+  truncQ: 2                # default DADA2; deja que maxEE haga el QC
+  rm_phix: true
+  multithread: true
+
+# --- DADA2: learnErrors + dada (paso 03) --------------------------------------
+dada2_inference:
+  pool: pseudo             # pseudo-pooling: balance sensibilidad/tiempo
+  OMEGA_A: 1e-40           # default DADA2 — ajustar solo si justificas
+  multithread: true
+
+# --- DADA2: mergePairs --------------------------------------------------------
+# justConcatenate=TRUE: el truncado Q20-reality (140+160=300 nt) no permite
+# overlap con el amplicón Leray (313 nt). En lugar de solapar, DADA2 concatena
+# R1 + 10×N + reverseComp(R2). El ASV resultante NO es biológicamente continuo
+# entre las dos mitades, pero es válido para asignación taxonómica con VSEARCH
+# (los N se tratan como gap tolerado) o BLAST.
+merge_pairs:
+  justConcatenate: true
+  minOverlap: 12           # ignorado cuando justConcatenate=TRUE
+  maxMismatch: 0
+
+# --- DADA2: removeBimeraDenovo -----------------------------------------------
+chimera:
+  method: consensus
+
+# --- COI-specific post-processing --------------------------------------------
+# IMPORTANTE: con justConcatenate=TRUE el ASV es 140 + 10N + 160 = 310 nt,
+# NO el amplicón continuo Leray (313 nt). El check de traducción no se puede
+# correr porque los 10 N rompen el marco de lectura entre las mitades.
+coi_filtering:
+  apply_translation_check: false   # DESACTIVADO con justConcatenate=TRUE
+  genetic_code: 5                  # NCBI table 5 (queda informativo)
+  frame: auto
+  min_length: 305                  # 310 ± 5 (140+10N+160 con tolerancia)
+  max_length: 315
+
+# --- Taxonomía: BOLD + NCBI vía RESCRIPt --------------------------------------
+# Estrategia (reemplaza MIDORI2): construir DOS DBs curadas con RESCRIPt
+# siguiendo los tutoriales oficiales del foro QIIME2:
+#   - BOLD:  https://forum.qiime2.org/t/building-a-coi-database-from-bold-references/16129
+#   - NCBI:  https://forum.qiime2.org/t/building-a-coi-database-from-ncbi-references/16500
+#
+# Estos pipelines se ejecutan UNA SOLA VEZ (paso 04a y 04b) y producen los
+# artefactos .qza que luego se exportan a FASTA/TSV consumibles por DADA2.
+#
+# El paso 04 (asignación) ofrece tres estrategias seleccionables:
+#   1) Naive Bayes en QIIME2 (classify-sklearn) — mejor para BOLD curada
+#   2) VSEARCH consensus (classify-consensus-vsearch) — robusto a gaps
+#   3) DADA2 assignTaxonomy() en R — más simple, no requiere QIIME2 en infer
+taxonomy:
+  strategy: vsearch_consensus      # naive_bayes | vsearch_consensus | dada2_R
+  primary_db:   bold               # BOLD primero (mejor cobertura de metazoos)
+  secondary_db: ncbi               # NCBI para huérfanos de BOLD
+
+  # --- BOLD vía RESCRIPt ---------------------------------------------------
+  bold:
+    enabled: true
+    rescript_marker: COI-5P
+    # Taxa a descargar (filtros BOLD). Para LANCO oceanográfico:
+    # Metazoa + Algae + Fungi cubre el espectro esperable en eDNA marino.
+    taxa:
+      - Metazoa
+      - Algae
+      - Fungi
+    # Filtros de curado (RESCRIPt cull-seqs / filter-seqs)
+    min_length: 250                # COI 313 ± wobble, descartar fragmentos
+    max_length: 1600               # full-length COI hasta ~1500 nt
+    max_ambig: 5                   # descartar seqs con >5 N
+    # Dereplicación
+    dereplicate_mode: uniq         # uniq | lca | majority
+    # Salidas
+    seqs_qza: db/rescript/bold-coi-seqs.qza
+    tax_qza:  db/rescript/bold-coi-tax.qza
+    classifier_qza: db/rescript/bold-coi-classifier.qza
+    seqs_fasta: db/rescript/bold-coi-seqs.fasta        # export para DADA2/VSEARCH
+    tax_tsv:    db/rescript/bold-coi-tax.tsv
+
+  # --- NCBI vía RESCRIPt ---------------------------------------------------
+  ncbi:
+    enabled: true
+    # Query Entrez para COI completo (mitocondrial), excluye predicted/incomplete
+    entrez_query: >-
+      (COI[Title] OR COX1[Title] OR CO1[Title] OR
+       "cytochrome c oxidase subunit 1"[Title] OR
+       "cytochrome oxidase subunit 1"[Title])
+      AND 250:1600[SLEN]
+      NOT (environmental samples[ORGN] OR unclassified[ORGN])
+    ranks: ["superkingdom","phylum","class","order","family","genus","species"]
+    min_length: 250
+    max_length: 1600
+    max_ambig: 5
+    dereplicate_mode: uniq
+    seqs_qza: db/rescript/ncbi-coi-seqs.qza
+    tax_qza:  db/rescript/ncbi-coi-tax.qza
+    classifier_qza: db/rescript/ncbi-coi-classifier.qza
+    seqs_fasta: db/rescript/ncbi-coi-seqs.fasta
+    tax_tsv:    db/rescript/ncbi-coi-tax.tsv
+
+  # --- Clasificación ASVs --------------------------------------------------
+  classification:
+    # parámetros para classify-consensus-vsearch
+    perc_identity: 0.85
+    maxaccepts: 10
+    min_consensus: 0.51
+    threads: 8
+    # parámetros para DADA2 assignTaxonomy (fallback en R)
+    dada2_minBoot: 80
+    dada2_tryRC: true
+
+# --- Recursos de cómputo ------------------------------------------------------
+compute:
+  cores_total: 8
+  memory_gb: 32
