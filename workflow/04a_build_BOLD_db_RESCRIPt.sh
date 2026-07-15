@@ -15,10 +15,11 @@
 #   5) Exportar a FASTA + TSV consumible por R/DADA2 y VSEARCH
 # -----------------------------------------------------------------------------
 # Requisitos:
-#   bash workflow/00_setup_envs.sh rescript   # crea qiime2-rescript + RESCRIPt + yq v4
-#   mamba activate qiime2-rescript
-# (yq v4 -mikefarah/yq- no existe en conda; 00_setup_envs.sh lo instala como
-#  binario directo desde GitHub releases en el bin del entorno activo.)
+#   source activate qiime2-2026        # env del cluster LUSTRE (Anaconda 2026)
+#   # RESCRIPt debe estar instalado dentro de qiime2-2026:
+#   #   pip install git+https://github.com/bokulich-lab/RESCRIPt.git
+#   # yq v4 (mikefarah): binario estático de GitHub releases → $CONDA_PREFIX/bin
+#   # (el SLURM wrapper 04_build_dbs_RESCRIPt.slurm lo autoinstala si falta).
 # -----------------------------------------------------------------------------
 # Tiempo esperado: 2–8 h dependiendo del taxon (Metazoa es el más pesado).
 # Espacio en disco: ~10–25 GB para BOLD Metazoa completo.
@@ -32,7 +33,7 @@ PARAMS="${ROOT}/config/params.yml"
 
 # ---- Verificar dependencias -------------------------------------------------
 command -v qiime >/dev/null 2>&1 || {
-  echo "[ERROR] qiime no encontrado. Activa el entorno qiime2-rescript." >&2; exit 1; }
+  echo "[ERROR] qiime no encontrado. Activa el entorno qiime2-2026." >&2; exit 1; }
 command -v yq    >/dev/null 2>&1 || { echo "[ERROR] yq requerido." >&2; exit 1; }
 
 qiime rescript --help >/dev/null 2>&1 || {

@@ -16,7 +16,7 @@
 #   6) Exportar a FASTA + TSV para consumo en R/DADA2/VSEARCH
 # -----------------------------------------------------------------------------
 # Requisitos (mismo entorno que 04a):
-#   mamba activate qiime2-rescript
+#   source activate qiime2-2026       # env del cluster LUSTRE
 # Variable de entorno opcional:
 #   export NCBI_API_KEY="tu_api_key"      # acelera ~10x el rate limit
 # -----------------------------------------------------------------------------
@@ -31,7 +31,7 @@ ROOT="$( cd "${SCRIPT_DIR}/.." && pwd )"
 PARAMS="${ROOT}/config/params.yml"
 
 command -v qiime >/dev/null 2>&1 || {
-  echo "[ERROR] Activa el entorno qiime2-rescript." >&2; exit 1; }
+  echo "[ERROR] Activa el entorno qiime2-2026." >&2; exit 1; }
 command -v yq >/dev/null 2>&1 || { echo "[ERROR] yq requerido." >&2; exit 1; }
 qiime rescript --help >/dev/null 2>&1 || {
   echo "[ERROR] Plugin RESCRIPt no instalado." >&2; exit 1; }
