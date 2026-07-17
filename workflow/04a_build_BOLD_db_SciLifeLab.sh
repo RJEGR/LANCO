@@ -87,9 +87,10 @@ download_check () {
 download_check "$FASTA_URL" "coidb.clustered.fasta.gz"          "$FASTA_MD5"
 download_check "$TAX_URL"   "coidb.qiime2.info.exclNA.tsv.gz"   "$TAX_MD5"
 
-# ---- 2) Descomprimir (SciLifeLab v6 ya no tiene doble-gzip) ---------------
-[[ -s coidb.clustered.fasta ]] || gunzip -kf coidb.clustered.fasta.gz
-[[ -s coidb.qiime2.info.exclNA.tsv ]] || gunzip -kf coidb.qiime2.info.exclNA.tsv.gz
+# ---- 2) Descomprimir (mantiene .gz — compatible con gzip 1.5 sin -k) ------
+# gzip < 1.6 no soporta -k; usamos redirección con zcat que es portable.
+[[ -s coidb.clustered.fasta ]]        || zcat coidb.clustered.fasta.gz        > coidb.clustered.fasta
+[[ -s coidb.qiime2.info.exclNA.tsv ]] || zcat coidb.qiime2.info.exclNA.tsv.gz > coidb.qiime2.info.exclNA.tsv
 
 # ---- 3) Normalizar headers FASTA (solo processid, sin ' bin_uri:...') ------
 # QIIME2 tools import necesita que los IDs FASTA coincidan con Feature ID del TSV.
