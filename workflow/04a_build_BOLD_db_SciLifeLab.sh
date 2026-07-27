@@ -160,13 +160,22 @@ else
   cp bold-raw-tax.qza  "${ROOT}/${TAX_QZA}"
 fi
 
-# ---- 6) Naive Bayes (opcional pero recomendado, 30–90 min) -----------------
-echo "[04a] fit-classifier-naive-bayes"
-qiime feature-classifier fit-classifier-naive-bayes \
-  --i-reference-reads    "${ROOT}/${SEQS_QZA}" \
-  --i-reference-taxonomy "${ROOT}/${TAX_QZA}" \
-  --o-classifier         "${ROOT}/${CLS_QZA}" \
-  --verbose 2>&1 | tee "${LOG_DIR}/fit-classifier.log"
+# ---- 6) Naive Bayes (OPCIONAL, deshabilitado por defecto) ------------------
+# BOLD tiene cientos de miles de taxa; label_binarize puede exceder RAM.
+# La estrategia activa `vsearch_consensus` NO necesita este clasificador.
+# Actívalo solo si planeas usar classify-sklearn y tienes ≥256 GB.
+#   export FIT_NB_CLASSIFIER=1
+if [[ "${FIT_NB_CLASSIFIER:-0}" == "1" ]]; then
+  echo "[04a] fit-classifier-naive-bayes (requiere mucha memoria)..."
+  qiime feature-classifier fit-classifier-naive-bayes \
+    --i-reference-reads    "${ROOT}/${SEQS_QZA}" \
+    --i-reference-taxonomy "${ROOT}/${TAX_QZA}" \
+    --o-classifier         "${ROOT}/${CLS_QZA}" \
+    --verbose 2>&1 | tee "${LOG_DIR}/fit-classifier.log"
+else
+  echo "[04a] fit-classifier-naive-bayes OMITIDO (estrategia vsearch_consensus)."
+  echo "      Para activarlo: FIT_NB_CLASSIFIER=1 y --mem>=256G en SLURM."
+fi
 
 # ---- 7) Exportar FASTA (DADA2 assignTaxonomy) + TSV -----------------------
 echo "[04a] Exportando a FASTA + TSV"
