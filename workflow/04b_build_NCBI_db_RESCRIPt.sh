@@ -115,13 +115,24 @@ qiime rescript dereplicate \
   --o-dereplicated-sequences "../$(basename $SEQS_QZA)" \
   --o-dereplicated-taxa      "../$(basename $TAX_QZA)"
 
-# ---- 5) Entrenar Naive Bayes (opcional) ------------------------------------
-echo "[04b] fit-classifier-naive-bayes..."
-qiime feature-classifier fit-classifier-naive-bayes \
-  --i-reference-reads    "../$(basename $SEQS_QZA)" \
-  --i-reference-taxonomy "../$(basename $TAX_QZA)" \
-  --o-classifier         "../$(basename $CLS_QZA)" \
-  --verbose 2>&1 | tee "${LOG_DIR}/fit-classifier.log"
+# ---- 5) Entrenar Naive Bayes (OPCIONAL, deshabilitado por defecto) ---------
+# NCBI COI tiene ~835 k etiquetas taxonómicas únicas → label_binarize genera
+# una matriz densa de ~124 GB (chunk 20 000 × 835 170 int64), imposible en
+# nodos de 64 GB. La estrategia activa `vsearch_consensus` NO necesita este
+# clasificador. Actívalo solo si planeas usar classify-sklearn y tienes ≥256 GB.
+#   export FIT_NB_CLASSIFIER=1
+#   sbatch --mem=256G ...
+if [[ "${FIT_NB_CLASSIFIER:-0}" == "1" ]]; then
+  echo "[04b] fit-classifier-naive-bayes (requiere mucha memoria)..."
+  qiime feature-classifier fit-classifier-naive-bayes \
+    --i-reference-reads    "../$(basename $SEQS_QZA)" \
+    --i-reference-taxonomy "../$(basename $TAX_QZA)" \
+    --o-classifier         "../$(basename $CLS_QZA)" \
+    --verbose 2>&1 | tee "${LOG_DIR}/fit-classifier.log"
+else
+  echo "[04b] fit-classifier-naive-bayes OMITIDO (estrategia vsearch_consensus)."
+  echo "      Para activarlo: FIT_NB_CLASSIFIER=1 y --mem>=256G en SLURM."
+fi
 
 # ---- 6) Exportar a FASTA + TSV para DADA2/VSEARCH --------------------------
 echo "[04b] Exportando a FASTA + TSV..."
