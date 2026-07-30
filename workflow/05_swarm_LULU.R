@@ -27,9 +27,17 @@
 #   - track_clustering.tsv                 (resumen reducción ASVs→swarm→LULU)
 # -----------------------------------------------------------------------------
 # DEPENDENCIAS EXTERNAS (verificadas al inicio del script):
-#   - swarm v3+   :  brew install swarm   |   conda install -c bioconda swarm
-#   - vsearch v2+ :  brew install vsearch |   conda install -c bioconda vsearch
+#   - swarm v3+   :  ver docs/INSTALL_dependencies.md
+#   - vsearch v2+ :  ver docs/INSTALL_dependencies.md
 #   - R-pkg lulu  :  devtools::install_github("tobiasgf/lulu")
+#
+# INSTALACIÓN validada 2026-06-23 (macOS osx-64):
+#   conda create -n coi_pipeline -c conda-forge -c bioconda \
+#          swarm=3.0 vsearch python-igraph -y
+#   conda activate coi_pipeline
+# NOTA: `conda install -c bioconda swarm` sin conda-forge falla por bug
+# de metadata (dep falsa a python-igraph). El env aislado con conda-forge
+# prioritario resuelve el conflicto.
 # =============================================================================
 
 suppressPackageStartupMessages({
